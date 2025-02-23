@@ -89,7 +89,7 @@ where
             mode: DisplayMode::Text,
         };
         display.cs.set_low();
-        display.delay.delay_ms(100);
+        display.delay.delay_ms(5);
         display.hardware_reset()?;
         display.initialize()?;
         display.test_draw()?;
@@ -97,23 +97,51 @@ where
     }
 
     fn hardware_reset(&mut self) -> Result<(), E> {
-        self.res.set_high();
-        self.delay.delay_ms(20);
         self.res.set_low();
-        self.delay.delay_ms(20);
+        self.delay.delay_ms(10);
         self.res.set_high();
-        self.delay.delay_ms(20);
+        self.delay.delay_ms(3);
         Ok(())
     }
 
     fn initialize(&mut self) -> Result<(), E> {
+        self.clear_display();
         self.write_command(Command::SystemSet);
         // TODO: Maybe allow user to specify the parameters.
         // https://threefivedisplays.com/wp-content/uploads/datasheets/lcd_driver_datasheets/RA8835_REV_3_0_DS.pdf
         // Page 13
-        for data in [0x30, 0x87, 0x07, 0x27, 0x2F, 0xEF, 0x28, 0x00] {
+        for data in [0x30, 0x87, 0x07, 0x26, 0x2A, 0x1E, 0x26, 0x00] {
             self.write_data(data);
         }
+        Ok(())
+    }
+
+    pub fn clear_display(&mut self) -> Result<(), E> {
+        self.write_command(Command::Csrw);
+        self.write_data(0x00);
+
+        self.write_command(Command::CsrDirRight);
+        self.write_command(Command::Mwrite);
+        let mut i = 32768;
+        while i >= 0 {
+            self.write_data(0x00);
+            i-=1;
+        }
+        Ok(())
+    }
+
+    pub fn write_text(&mut self, text: &str) -> Result<(), E> {
+        // TODO: set csrw? We otherwise write at current cursor address.
+        self.write_command(Command::Mwrite);
+        for &char in text.as_bytes() {
+            self.write_data(char);
+        }
+        Ok(())
+    }
+
+    pub fn write_char(&mut self, char: u8) -> Result<(), E> {
+        self.write_command(Command::Mwrite);
+        self.write_data(char);
         Ok(())
     }
 
@@ -148,59 +176,29 @@ where
         self.write_command(Command::CsrDirRight);
 
         self.write_command(Command::Mwrite);
-        for data in [0x20, 0x52, 0x41, 0x49, 0x4F] {
-            self.write_data(data);
-        }
-
-        self.write_command(Command::Csrw);
-        self.write_data(0x00);
-        self.write_data(0x10);
-
-        self.write_command(Command::CsrDirDown);
-
-        self.write_command(Command::Mwrite);
-        for data in [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] {
-            self.write_data(data);
-        }
-
-        self.write_command(Command::Csrw);
-        self.write_data(0x01);
-        self.write_data(0x10);
-
-        self.write_command(Command::Mwrite);
-        for data in [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] {
+        for &data in "hell world".as_bytes() {
             self.write_data(data);
         }
         Ok(())
     }
 
     fn write_command(&mut self, cmd: Command) -> Result<(), E> {
-        // TODO: Check/fix delay timings.
-        // Check if a0,wr,rd needs to be toggled high/low in the end.
-        self.delay.delay_ns(40);
         self.a0.set_high();
-        self.wr.set_low();
-        self.rd.set_high();
-        self.delay.delay_ns(40);
         self.data.write(cmd as u8);
+        self.delay.delay_ns(20);
+        self.wr.set_low();
         self.delay.delay_ns(180);
         self.wr.set_high();
-        self.rd.set_low();
         Ok(())
     }
 
     fn write_data(&mut self, data: u8) -> Result<(), E> {
-        // TODO: Check/fix delay timings.
-        // Check if a0,wr,rd needs to be toggled high/low in the end.
-        self.delay.delay_ns(40);
         self.a0.set_low();
-        self.wr.set_low();
-        self.rd.set_high();
-        self.delay.delay_ns(40);
         self.data.write(data);
+        self.delay.delay_ns(20);
+        self.wr.set_low();
         self.delay.delay_ns(180);
         self.wr.set_high();
-        self.rd.set_low();
         Ok(())
     }
 
