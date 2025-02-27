@@ -42,6 +42,29 @@ enum Command {
     Mread = 0x43,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Config {
+    pub font_width: u8,
+    pub font_height: u8,
+    pub screen_width: u16,
+    pub screen_height: u16,
+}
+
+
+impl Config {
+    pub fn new(font_width: u8, font_height: u8, screen_width: u16, screen_height: u16) -> Result<Self, &'static str> {
+        let chars_per_line = screen_width / font_width as u16;
+        let bytes_per_char = ((font_width + 7) / 8) as u16;
+        let cr = chars_per_line * bytes_per_char;
+        if cr > 239 { return Err("CR exceeds maximum 239"); }
+        Ok(Self {
+            font_width, font_height,
+            screen_width, screen_height,
+        })
+    }
+}
+
+
 pub struct RA8835A<DATA, A0, WR, RD, CS, RES, DELAY> {
     /// D0 to D7.
     data: DATA,
@@ -58,13 +81,7 @@ pub struct RA8835A<DATA, A0, WR, RD, CS, RES, DELAY> {
     /// Active-LOW input for hardware reset.
     res: RES,
     delay: DELAY,
-    mode: DisplayMode,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum DisplayMode {
-    Text,
-    Graphic,
+    config: Config,
 }
 
 impl<DATA, A0, WR, RD, CS, RES, DELAY, E> RA8835A<DATA, A0, WR, RD, CS, RES, DELAY>
@@ -77,7 +94,7 @@ where
     RES: OutputPin,
     DELAY: DelayNs,
 {
-    pub fn new(data: DATA, a0: A0, wr: WR, rd: RD, cs: CS, res: RES, delay: DELAY) -> Result<Self, E> {
+    pub fn new(data: DATA, a0: A0, wr: WR, rd: RD, cs: CS, res: RES, delay: DELAY, config: Config) -> Result<Self, E> {
         let mut display = Self {
             data,
             a0,
@@ -86,12 +103,12 @@ where
             cs,
             res,
             delay,
-            mode: DisplayMode::Text,
+            config,
         };
         display.cs.set_low();
-        display.delay.delay_ms(5);
         display.hardware_reset()?;
         display.initialize()?;
+        display.clear_display();
         display.test_draw()?;
         Ok(display)
     }
@@ -105,13 +122,25 @@ where
     }
 
     fn initialize(&mut self) -> Result<(), E> {
-        self.clear_display();
         self.write_command(Command::SystemSet);
-        // TODO: Maybe allow user to specify the parameters.
-        // https://threefivedisplays.com/wp-content/uploads/datasheets/lcd_driver_datasheets/RA8835_REV_3_0_DS.pdf
-        // Page 13
-        for data in [0x30, 0x87, 0x07, 0x26, 0x2A, 0x1E, 0x26, 0x00] {
-            self.write_data(data);
+        let fx = self.config.font_width - 1;
+        let fy = self.config.font_height - 1;
+        let chars_per_line = self.config.screen_width / self.config.font_width as u16;
+        let bytes_per_char = ((self.config.font_width + 7) / 8) as u16;
+        let cr = chars_per_line * bytes_per_char;
+        let lf = self.config.screen_height - 1;
+        let params = [
+            0x30,             // P1: Control byte (default configuration)
+            (0x01 << 7) + fx, // P2: WF 0 0 0 0 FX
+            fy,               // P3: FY
+            cr as u8,         // P4: CR
+            cr as u8 + 4,     // P5: TCR
+            lf as u8,         // P6: LF
+            cr as u8,         // P7: APL
+            0x00,             // P8: APH
+        ];
+        for param in params {
+            self.write_data(param);
         }
         Ok(())
     }
@@ -150,7 +179,7 @@ where
     // Page 60
     fn test_draw(&mut self) -> Result<(), E> {
         self.write_command(Command::Scroll);
-        for data in [0x00, 0x00, 0xF0, 0x80, 0x25, 0xF0, 0x00, 0x4B, 0x00, 0x00] {
+        for data in [0x00, 0x00, 0xF0, 0x80, 0x25, 0xF0, 0x00, 0x4B] {
             self.write_data(data);
         }
 
@@ -161,7 +190,8 @@ where
         self.write_data(0x01);
 
         self.write_command(Command::DisplayOff);
-        self.write_data(0x56);
+        // self.write_data(0x56);
+        self.write_data(0b00001101);
 
         self.write_command(Command::Csrw);
         self.write_data(0x00);
@@ -185,9 +215,9 @@ where
     fn write_command(&mut self, cmd: Command) -> Result<(), E> {
         self.a0.set_high();
         self.data.write(cmd as u8);
-        self.delay.delay_ns(20);
+        self.delay.delay_ns(10);
         self.wr.set_low();
-        self.delay.delay_ns(180);
+        self.delay.delay_ns(160);
         self.wr.set_high();
         Ok(())
     }
@@ -195,9 +225,9 @@ where
     fn write_data(&mut self, data: u8) -> Result<(), E> {
         self.a0.set_low();
         self.data.write(data);
-        self.delay.delay_ns(20);
+        self.delay.delay_ns(10);
         self.wr.set_low();
-        self.delay.delay_ns(180);
+        self.delay.delay_ns(160);
         self.wr.set_high();
         Ok(())
     }
@@ -217,7 +247,7 @@ where
 pub trait ParallelBus {
     type Error;
 
-    fn write(&mut self, value: u8) -> Result<(), Self::Error>;
+    fn write(&mut self, value: u8) -> ();
     fn read(&mut self) -> Result<u8, Self::Error>;
     fn set_input(&mut self) -> Result<(), Self::Error>;
     fn set_output(&mut self) -> Result<(), Self::Error>;
