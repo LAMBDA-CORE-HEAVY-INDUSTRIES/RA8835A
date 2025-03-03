@@ -230,6 +230,18 @@ where
         Ok(())
     }
 
+    pub fn write_text_at(&mut self, text: &str, x: u16, y: u16) {
+        let chars_per_line = self.config.screen_width / self.config.font_width as u16;
+        let char_x = x / self.config.font_width as u16;
+        let char_y = y / self.config.font_height as u16;
+        let byte_addr = self.config.text_layer_start + (char_y * chars_per_line) + char_x;
+        self.set_cursor_address(byte_addr);
+        self.write_command(Command::Mwrite);
+        for &char in text.as_bytes() {
+            self.write_data(char);
+        }
+    }
+
     /// Turn the display off and on to enable layers defined in `configure_layers()`.
     fn enable_display(&mut self) -> Result<(), E> {
         self.write_command(Command::HdotScr);
