@@ -48,6 +48,8 @@ pub struct Config {
     pub font_height: u8,
     pub screen_width: u16,
     pub screen_height: u16,
+    pub text_layer_start: u16,
+    pub graphics_layer_start: u16,
 }
 
 
@@ -57,9 +59,15 @@ impl Config {
         let bytes_per_char = ((font_width + 7) / 8) as u16;
         let cr = chars_per_line * bytes_per_char;
         if cr > 239 { return Err("CR exceeds maximum 239"); }
+
+        let lines = screen_height / font_height as u16;
+        let text_layer_size = chars_per_line * lines;
+        let text_layer_start = 0x0000;
+        let graphics_layer_start = text_layer_start + text_layer_size;
         Ok(Self {
             font_width, font_height,
             screen_width, screen_height,
+            text_layer_start, graphics_layer_start,
         })
     }
 }
@@ -82,6 +90,13 @@ pub struct RA8835A<DATA, A0, WR, RD, CS, RES, DELAY> {
     res: RES,
     delay: DELAY,
     config: Config,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+enum Layer {
+    Text,
+    Graphics,
 }
 
 impl<DATA, A0, WR, RD, CS, RES, DELAY, E> RA8835A<DATA, A0, WR, RD, CS, RES, DELAY>
@@ -108,8 +123,22 @@ where
         display.cs.set_low();
         display.hardware_reset()?;
         display.initialize()?;
+        display.configure_layers()?;
         display.clear_display();
-        display.test_draw()?;
+        display.enable_display()?;
+        display.write_command(Command::CsrDirRight);
+        display.write_command(Command::Mwrite);
+        let text = "HELL WORLD";
+        for &char in text.as_bytes() {
+            display.write_data(char);
+        }
+
+        display.select_layer(Layer::Graphics);
+        display.draw_line(100, 50, 200, 100);
+
+        for x in 40..200{
+            display.set_pixel(x, x);
+        }
         Ok(display)
     }
 
@@ -145,22 +174,55 @@ where
         Ok(())
     }
 
+    /// Configure layer 1 (text), and layer 2 (graphics).
+    fn configure_layers(&mut self) -> Result<(), E> {
+        self.write_command(Command::Scroll);
+        let params = [
+            (self.config.text_layer_start & 0xFF) as u8,
+            (self.config.text_layer_start >> 8) as u8,
+            (self.config.screen_height) as u8,
+            (self.config.graphics_layer_start & 0xFF) as u8,
+            (self.config.graphics_layer_start >> 8) as u8,
+            (self.config.screen_height) as u8,
+            // 0x00, 0x00,
+        ];
+        for param in params {
+            self.write_data(param);
+        }
+        Ok(())
+    }
+
+    fn select_layer(&mut self, layer: Layer) -> Result<(), E> {
+        // TODO: We might want to delete this altogether and have
+        // any text/graphics function determine the address region start + offset.
+        let mut address = match layer {
+            Layer::Text => self.config.text_layer_start,
+            Layer::Graphics => self.config.graphics_layer_start,
+        };
+        self.set_cursor_address(address)?;
+        Ok(())
+    }
+
     pub fn clear_display(&mut self) -> Result<(), E> {
+        let total_bytes = (self.config.screen_width / 8) * self.config.screen_height;
         self.write_command(Command::Csrw);
         self.write_data(0x00);
-
+        self.write_data(0x00);
         self.write_command(Command::CsrDirRight);
         self.write_command(Command::Mwrite);
-        let mut i = 32768;
-        while i >= 0 {
+        for _ in 0..total_bytes {
             self.write_data(0x00);
-            i-=1;
+        }
+        let x = 0x04B0;
+        for _ in x..x*20 {
+            self.write_data(0x00);
         }
         Ok(())
     }
 
     pub fn write_text(&mut self, text: &str) -> Result<(), E> {
-        // TODO: set csrw? We otherwise write at current cursor address.
+        // TODO: Add x, y as arguments?
+        self.select_layer(Layer::Text)?;
         self.write_command(Command::Mwrite);
         for &char in text.as_bytes() {
             self.write_data(char);
@@ -168,48 +230,64 @@ where
         Ok(())
     }
 
-    pub fn write_char(&mut self, char: u8) -> Result<(), E> {
-        self.write_command(Command::Mwrite);
-        self.write_data(char);
-        Ok(())
-    }
-
-    // NOTE: Just for testing purposes. Delete this.
-    // https://threefivedisplays.com/wp-content/uploads/datasheets/lcd_driver_datasheets/RA8835_REV_3_0_DS.pdf
-    // Page 60
-    fn test_draw(&mut self) -> Result<(), E> {
-        self.write_command(Command::Scroll);
-        for data in [0x00, 0x00, 0xF0, 0x80, 0x25, 0xF0, 0x00, 0x4B] {
-            self.write_data(data);
-        }
-
+    /// Turn the display off and on to enable layers defined in `configure_layers()`.
+    fn enable_display(&mut self) -> Result<(), E> {
         self.write_command(Command::HdotScr);
         self.write_data(0x00);
 
-        self.write_command(Command::Ovlay);
-        self.write_data(0x01);
-
         self.write_command(Command::DisplayOff);
-        // self.write_data(0x56);
-        self.write_data(0b00001101);
+        // First and second layer enabled. Flash cursor at ~16hz.
+        self.write_data(0b00111111);
 
         self.write_command(Command::Csrw);
         self.write_data(0x00);
         self.write_data(0x00);
-
         self.write_command(Command::CsrForm);
         self.write_data(0x04);
         self.write_data(0x86);
-
+        self.write_command(Command::Ovlay);
+        self.write_data(0x00);
         self.write_command(Command::DisplayOn);
-
-        self.write_command(Command::CsrDirRight);
-
-        self.write_command(Command::Mwrite);
-        for &data in "hell world".as_bytes() {
-            self.write_data(data);
-        }
         Ok(())
+    }
+
+    fn draw_line(&mut self, x0: u16, y0: u16, x1: u16, y1: u16) {
+        // Bresenham's line algorithm implementation
+        let dx = (x1 as i16 - x0 as i16).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let dy = -(y1 as i16 - y0 as i16).abs();
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+        let (mut x, mut y) = (x0 as i16, y0 as i16);
+        loop {
+            self.set_pixel(x as u16, y as u16);
+            if x == x1 as i16 && y == y1 as i16 { break; }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+
+    fn set_pixel(&mut self, x: u16, y: u16) {
+        // self.select_layer(Layer::Graphics);
+        let bit_mask = 0x80 >> (x % 8);
+        let bytes_per_line = self.config.screen_width / 8;
+        let byte_addr = self.config.graphics_layer_start + (y * bytes_per_line) + (x / 8);
+        self.set_cursor_address(byte_addr);
+
+        self.write_command(Command::Mread);
+        let current = self.read_data().unwrap_or(0);
+        let new_data = current | bit_mask;
+
+        self.set_cursor_address(byte_addr);
+        self.write_command(Command::Mwrite);
+        self.write_data(new_data);
     }
 
     fn write_command(&mut self, cmd: Command) -> Result<(), E> {
@@ -233,14 +311,22 @@ where
     }
 
     fn read_data(&mut self) -> Result<u8, E> {
-        todo!();
+        self.a0.set_low();
+        self.data.set_input();
+        self.rd.set_low();
+        self.delay.delay_ns(40);
+        let result = self.data.read()?;
+        self.delay.delay_ns(80);
+        self.rd.set_high();
+        self.data.set_output();
+        Ok(result)
     }
 
     fn set_cursor_address(&mut self, address: u16) -> Result<(), E> {
-        todo!();
-        // self.write_command(Command::Csrw)?;
-        // self.write_data((address & 0xFF) as u8)?;
-        // self.write_data((address >> 8) as u8)
+        self.write_command(Command::Csrw)?;
+        self.write_data((address & 0xFF) as u8);
+        self.write_data((address >> 8) as u8);
+        Ok(())
     }
 }
 
@@ -249,6 +335,6 @@ pub trait ParallelBus {
 
     fn write(&mut self, value: u8) -> ();
     fn read(&mut self) -> Result<u8, Self::Error>;
-    fn set_input(&mut self) -> Result<(), Self::Error>;
-    fn set_output(&mut self) -> Result<(), Self::Error>;
+    fn set_input(&mut self) -> ();
+    fn set_output(&mut self) -> ();
 }
