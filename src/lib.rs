@@ -5,7 +5,7 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 
 #[repr(u8)]
-enum Command {
+pub enum Command {
     /// Initialize device and display.
     SystemSet = 0x40,
     /// Enter standby mode.
@@ -117,19 +117,8 @@ where
         display.hardware_reset()?;
         display.initialize()?;
         display.configure_layers()?;
-        display.clear_display();
+        display.clear_display()?;
         display.enable_display()?;
-        display.write_command(Command::CsrDirRight);
-        display.write_command(Command::Mwrite);
-        let text = "HELL WORLD";
-        for &char in text.as_bytes() {
-            display.write_data(char);
-        }
-
-
-        for x in 40..200{
-            display.set_pixel(x, x);
-        }
         Ok(display)
     }
 
@@ -142,7 +131,7 @@ where
     }
 
     fn initialize(&mut self) -> Result<(), E> {
-        self.write_command(Command::SystemSet);
+        self.write_command(Command::SystemSet)?;
         let fx = self.config.font_width - 1;
         let fy = self.config.font_height - 1;
         let chars_per_line = self.config.screen_width / self.config.font_width as u16;
@@ -160,14 +149,14 @@ where
             0x00,             // P8: APH
         ];
         for param in params {
-            self.write_data(param);
+            self.write_data(param)?;
         }
         Ok(())
     }
 
     /// Configure layer 1 (text), and layer 2 (graphics).
     fn configure_layers(&mut self) -> Result<(), E> {
-        self.write_command(Command::Scroll);
+        self.write_command(Command::Scroll)?;
         let params = [
             (self.config.text_layer_start & 0xFF) as u8,
             (self.config.text_layer_start >> 8) as u8,
@@ -178,103 +167,76 @@ where
             // 0x00, 0x00,
         ];
         for param in params {
-            self.write_data(param);
+            self.write_data(param)?;
         }
         Ok(())
     }
 
     pub fn clear_display(&mut self) -> Result<(), E> {
         let total_bytes = (self.config.screen_width / 8) * self.config.screen_height;
-        self.write_command(Command::Csrw);
-        self.write_data(0x00);
-        self.write_data(0x00);
-        self.write_command(Command::CsrDirRight);
-        self.write_command(Command::Mwrite);
-        for _ in 0..total_bytes {
-            self.write_data(0x00);
-        }
-        let x = self.config.graphics_layer_start;
-        for _ in x..x*20 {
-            self.write_data(0x00);
+        self.set_cursor_address(0x00)?;
+        self.write_command(Command::CsrDirRight)?;
+        self.write_command(Command::Mwrite)?;
+        for _ in 0..total_bytes*6 {
+            self.write_data(0x00)?;
         }
         Ok(())
     }
 
     pub fn write_text(&mut self, text: &str) -> Result<(), E> {
-        self.write_command(Command::Mwrite);
+        self.write_command(Command::Mwrite)?;
         for &char in text.as_bytes() {
-            self.write_data(char);
+            self.write_data(char)?;
         }
         Ok(())
     }
 
-    pub fn write_text_at(&mut self, text: &str, x: u16, y: u16) {
+    pub fn write_text_at(&mut self, text: &str, x: u16, y: u16) -> Result<(), E> {
         let chars_per_line = self.config.screen_width / self.config.font_width as u16;
         let char_x = x / self.config.font_width as u16;
         let char_y = y / self.config.font_height as u16;
         let byte_addr = self.config.text_layer_start + (char_y * chars_per_line) + char_x;
-        self.set_cursor_address(byte_addr);
-        self.write_command(Command::Mwrite);
+        self.set_cursor_address(byte_addr)?;
+        self.write_command(Command::Mwrite)?;
         for &char in text.as_bytes() {
-            self.write_data(char);
+            self.write_data(char)?;
         }
+        Ok(())
     }
 
     /// Turn the display off and on to enable layers defined in `configure_layers()`.
     fn enable_display(&mut self) -> Result<(), E> {
-        self.write_command(Command::HdotScr);
-        self.write_data(0x00);
+        self.write_command(Command::HdotScr)?;
+        self.write_data(0x00)?;
 
-        self.write_command(Command::DisplayOff);
+        self.write_command(Command::DisplayOff)?;
         // First and second layer enabled. Flash cursor at ~16hz.
-        self.write_data(0b00111111);
+        self.write_data(0b00111111)?;
 
-        self.write_command(Command::Csrw);
-        self.write_data(0x00);
-        self.write_data(0x00);
-        self.write_command(Command::CsrForm);
-        self.write_data(0x04);
-        self.write_data(0x86);
-        self.write_command(Command::Ovlay);
-        self.write_data(0x00);
-        self.write_command(Command::DisplayOn);
+        self.write_command(Command::Csrw)?;
+        self.write_data(0x00)?;
+        self.write_data(0x00)?;
+        self.write_command(Command::CsrForm)?;
+        self.write_data(0x04)?;
+        self.write_data(0x86)?;
+        self.write_command(Command::Ovlay)?;
+        self.write_data(0x00)?;
+        self.write_command(Command::DisplayOn)?;
         Ok(())
     }
 
-    pub fn draw_line(&mut self, x0: u16, y0: u16, x1: u16, y1: u16) {
-        // Bresenham's line algorithm.
-        let dx = (x1 as i16 - x0 as i16).abs();
-        let sx = if x0 < x1 { 1 } else { -1 };
-        let dy = -(y1 as i16 - y0 as i16).abs();
-        let sy = if y0 < y1 { 1 } else { -1 };
-        let mut err = dx + dy;
-        let (mut x, mut y) = (x0 as i16, y0 as i16);
-        loop {
-            self.set_pixel(x as u16, y as u16);
-            if x == x1 as i16 && y == y1 as i16 { break; }
-            let e2 = 2 * err;
-            if e2 >= dy {
-                err += dy;
-                x += sx;
-            }
-            if e2 <= dx {
-                err += dx;
-                y += sy;
-            }
-        }
-    }
-
-    pub fn set_pixel(&mut self, x: u16, y: u16) {
+    pub fn set_pixel(&mut self, x: u16, y: u16) -> Result<(), E> {
         let bit_mask = 1 << 0x07 - (x % 8);
         let bytes_per_line = self.config.screen_width / 8;
         let byte_addr = self.config.graphics_layer_start + (y * bytes_per_line) + (x / 8);
-        self.set_cursor_address(byte_addr);
-        self.write_command(Command::Mread);
+        self.set_cursor_address(byte_addr)?;
+        self.write_command(Command::Mread)?;
         let current = self.read_data().unwrap_or(0);
         let new_data = current | bit_mask;
-        self.set_cursor_address(byte_addr);
-        self.write_command(Command::Mwrite);
-        self.write_data(new_data);
+        self.set_cursor_address(byte_addr)?;
+        self.write_command(Command::Mwrite)?;
+        self.write_data(new_data)?;
+        Ok(())
     }
 
     pub fn write_command(&mut self, cmd: Command) -> Result<(), E> {
@@ -282,7 +244,7 @@ where
         self.data.write(cmd as u8);
         self.delay.delay_ns(10);
         self.wr.set_low();
-        self.delay.delay_ns(160);
+        self.delay.delay_ns(130);
         self.wr.set_high();
         Ok(())
     }
@@ -292,7 +254,7 @@ where
         self.data.write(data);
         self.delay.delay_ns(10);
         self.wr.set_low();
-        self.delay.delay_ns(160);
+        self.delay.delay_ns(130);
         self.wr.set_high();
         Ok(())
     }
@@ -301,9 +263,9 @@ where
         self.data.set_input();
         self.a0.set_high();
         self.rd.set_low();
-        self.delay.delay_ns(40);
+        self.delay.delay_ns(30);
         let result = self.data.read()?;
-        self.delay.delay_ns(20);
+        self.delay.delay_ns(10);
         self.rd.set_high();
         self.data.set_output();
         Ok(result)
@@ -311,8 +273,8 @@ where
 
     pub fn set_cursor_address(&mut self, address: u16) -> Result<(), E> {
         self.write_command(Command::Csrw)?;
-        self.write_data((address & 0xFF) as u8);
-        self.write_data((address >> 8) as u8);
+        self.write_data((address & 0xFF) as u8)?;
+        self.write_data((address >> 8) as u8)?;
         Ok(())
     }
 }
