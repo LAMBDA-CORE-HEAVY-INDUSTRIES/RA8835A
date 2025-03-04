@@ -14,7 +14,7 @@ enum Command {
     DisplayOff = 0x58,
     /// Display on.
     DisplayOn = 0x59,
-    /// Set display start address and display regions.
+    /// Set display start address and display memory regions.
     Scroll = 0x44,
     /// Set cursor type.
     CsrForm = 0x5D,
@@ -92,13 +92,6 @@ pub struct RA8835A<DATA, A0, WR, RD, CS, RES, DELAY> {
     config: Config,
 }
 
-
-#[derive(Debug, Clone, Copy)]
-enum Layer {
-    Text,
-    Graphics,
-}
-
 impl<DATA, A0, WR, RD, CS, RES, DELAY, E> RA8835A<DATA, A0, WR, RD, CS, RES, DELAY>
 where
     DATA: ParallelBus<Error = E>,
@@ -133,8 +126,6 @@ where
             display.write_data(char);
         }
 
-        display.select_layer(Layer::Graphics);
-        display.draw_line(100, 50, 200, 100);
 
         for x in 40..200{
             display.set_pixel(x, x);
@@ -192,17 +183,6 @@ where
         Ok(())
     }
 
-    fn select_layer(&mut self, layer: Layer) -> Result<(), E> {
-        // TODO: We might want to delete this altogether and have
-        // any text/graphics function determine the address region start + offset.
-        let mut address = match layer {
-            Layer::Text => self.config.text_layer_start,
-            Layer::Graphics => self.config.graphics_layer_start,
-        };
-        self.set_cursor_address(address)?;
-        Ok(())
-    }
-
     pub fn clear_display(&mut self) -> Result<(), E> {
         let total_bytes = (self.config.screen_width / 8) * self.config.screen_height;
         self.write_command(Command::Csrw);
@@ -213,7 +193,7 @@ where
         for _ in 0..total_bytes {
             self.write_data(0x00);
         }
-        let x = 0x04B0;
+        let x = self.config.graphics_layer_start;
         for _ in x..x*20 {
             self.write_data(0x00);
         }
@@ -221,8 +201,6 @@ where
     }
 
     pub fn write_text(&mut self, text: &str) -> Result<(), E> {
-        // TODO: Add x, y as arguments?
-        self.select_layer(Layer::Text)?;
         self.write_command(Command::Mwrite);
         for &char in text.as_bytes() {
             self.write_data(char);
@@ -263,8 +241,8 @@ where
         Ok(())
     }
 
-    fn draw_line(&mut self, x0: u16, y0: u16, x1: u16, y1: u16) {
-        // Bresenham's line algorithm implementation
+    pub fn draw_line(&mut self, x0: u16, y0: u16, x1: u16, y1: u16) {
+        // Bresenham's line algorithm.
         let dx = (x1 as i16 - x0 as i16).abs();
         let sx = if x0 < x1 { 1 } else { -1 };
         let dy = -(y1 as i16 - y0 as i16).abs();
@@ -299,7 +277,7 @@ where
         self.write_data(new_data);
     }
 
-    fn write_command(&mut self, cmd: Command) -> Result<(), E> {
+    pub fn write_command(&mut self, cmd: Command) -> Result<(), E> {
         self.a0.set_high();
         self.data.write(cmd as u8);
         self.delay.delay_ns(10);
@@ -309,7 +287,7 @@ where
         Ok(())
     }
 
-    fn write_data(&mut self, data: u8) -> Result<(), E> {
+    pub fn write_data(&mut self, data: u8) -> Result<(), E> {
         self.a0.set_low();
         self.data.write(data);
         self.delay.delay_ns(10);
@@ -331,7 +309,7 @@ where
         Ok(result)
     }
 
-    fn set_cursor_address(&mut self, address: u16) -> Result<(), E> {
+    pub fn set_cursor_address(&mut self, address: u16) -> Result<(), E> {
         self.write_command(Command::Csrw)?;
         self.write_data((address & 0xFF) as u8);
         self.write_data((address >> 8) as u8);
