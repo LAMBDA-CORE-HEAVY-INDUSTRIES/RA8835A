@@ -286,17 +286,14 @@ where
         }
     }
 
-    fn set_pixel(&mut self, x: u16, y: u16) {
-        // self.select_layer(Layer::Graphics);
-        let bit_mask = 0x80 >> (x % 8);
+    pub fn set_pixel(&mut self, x: u16, y: u16) {
+        let bit_mask = 1 << 0x07 - (x % 8);
         let bytes_per_line = self.config.screen_width / 8;
         let byte_addr = self.config.graphics_layer_start + (y * bytes_per_line) + (x / 8);
         self.set_cursor_address(byte_addr);
-
         self.write_command(Command::Mread);
         let current = self.read_data().unwrap_or(0);
         let new_data = current | bit_mask;
-
         self.set_cursor_address(byte_addr);
         self.write_command(Command::Mwrite);
         self.write_data(new_data);
@@ -322,13 +319,13 @@ where
         Ok(())
     }
 
-    fn read_data(&mut self) -> Result<u8, E> {
-        self.a0.set_low();
+    pub fn read_data(&mut self) -> Result<u8, E> {
         self.data.set_input();
+        self.a0.set_high();
         self.rd.set_low();
         self.delay.delay_ns(40);
         let result = self.data.read()?;
-        self.delay.delay_ns(80);
+        self.delay.delay_ns(20);
         self.rd.set_high();
         self.data.set_output();
         Ok(result)
