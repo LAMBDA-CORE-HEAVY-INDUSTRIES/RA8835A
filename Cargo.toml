@@ -1,5 +1,9 @@
 [package]
 name = "ra8835a"
+description = "RA8835A / SED1335 display driver"
+repository = "https://github.com/LAMBDA-CORE-HEAVY-INDUSTRIES/RA8835A"
+license = "MIT"
+keywords = ["ra8835a", "sed1335", "rust-embedded", "lcd-display"]
 version = "0.1.0"
 edition = "2021"
 
