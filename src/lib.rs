@@ -89,7 +89,7 @@ pub struct RA8835A<DATA, A0, WR, RD, CS, RES, DELAY> {
     /// Active-LOW input for hardware reset.
     res: RES,
     delay: DELAY,
-    config: Config,
+    pub config: Config,
 }
 
 impl<DATA, A0, WR, RD, CS, RES, DELAY, E> RA8835A<DATA, A0, WR, RD, CS, RES, DELAY>
