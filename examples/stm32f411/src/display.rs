@@ -142,7 +142,7 @@ where
         let mut err = dx + dy;
         let (mut x, mut y) = (x0 as i16, y0 as i16);
         loop {
-            self.driver.set_pixel(x as u16, y as u16);
+            self.driver.set_pixel(x as u16, y as u16, true);
             if x == x1 as i16 && y == y1 as i16 { break }
             let e2 = 2 * err;
             if e2 >= dy {
@@ -160,12 +160,12 @@ where
         let (start_x, end_x) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
         let (start_y, end_y) = if y0 <= y1 { (y0, y1) } else { (y1, y0) };
         for x in start_x..=end_x {
-            self.driver.set_pixel(x, start_y);
-            self.driver.set_pixel(x, end_y);
+            self.driver.set_pixel(x, start_y, true);
+            self.driver.set_pixel(x, end_y, true);
         }
         for y in start_y + 1..end_y {
-            self.driver.set_pixel(start_x, y);
-            self.driver.set_pixel(end_x, y);
+            self.driver.set_pixel(start_x, y, true);
+            self.driver.set_pixel(end_x, y, true);
         }
     }
 }

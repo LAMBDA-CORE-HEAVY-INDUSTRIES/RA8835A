@@ -225,14 +225,18 @@ where
         Ok(())
     }
 
-    pub fn set_pixel(&mut self, x: u16, y: u16) -> Result<(), E> {
+    /// Draw pixel at xy. `color` determines if pixel will be drawn or erased.
+    pub fn set_pixel(&mut self, x: u16, y: u16, color: bool) -> Result<(), E> {
         let bit_mask = 1 << 0x07 - (x % 8);
         let bytes_per_line = self.config.screen_width / 8;
         let byte_addr = self.config.graphics_layer_start + (y * bytes_per_line) + (x / 8);
         self.set_cursor_address(byte_addr)?;
         self.write_command(Command::Mread)?;
         let current = self.read_data().unwrap_or(0);
-        let new_data = current | bit_mask;
+        let new_data = match color {
+            true => current | bit_mask,
+            false => current & !bit_mask
+        };
         self.set_cursor_address(byte_addr)?;
         self.write_command(Command::Mwrite)?;
         self.write_data(new_data)?;
