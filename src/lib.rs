@@ -217,8 +217,8 @@ where
         self.write_data(0x00)?;
         self.write_data(0x00)?;
         self.write_command(Command::CsrForm)?;
-        self.write_data(0x04)?;
-        self.write_data(0x86)?;
+        self.write_data(0x05)?;
+        self.write_data((1 << 7) + self.config.font_height)?; // Block cursor.
         self.write_command(Command::Ovlay)?;
         self.write_data(0x00)?;
         self.write_command(Command::DisplayOn)?;
