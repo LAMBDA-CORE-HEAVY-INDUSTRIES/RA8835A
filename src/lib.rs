@@ -177,7 +177,7 @@ where
         self.set_cursor_address(0x00)?;
         self.write_command(Command::CsrDirRight)?;
         self.write_command(Command::Mwrite)?;
-        for _ in 0..total_bytes*6 {
+        for _ in 0..total_bytes*3 {
             self.write_data(0x00)?;
         }
         Ok(())
@@ -227,9 +227,9 @@ where
 
     /// Draw pixel at xy. `color` determines if pixel will be drawn or erased.
     pub fn set_pixel(&mut self, x: u16, y: u16, color: bool) -> Result<(), E> {
-        let bit_mask = 1 << 0x07 - (x % 8);
-        let bytes_per_line = self.config.screen_width / 8;
-        let byte_addr = self.config.graphics_layer_start + (y * bytes_per_line) + (x / 8);
+        let bit_mask = 1 << 0x07 - (x % self.config.font_width as u16);
+        let bytes_per_line = self.config.screen_width / self.config.font_width as u16;
+        let byte_addr = self.config.graphics_layer_start + (y * bytes_per_line) + (x / self.config.font_width as u16);
         self.set_cursor_address(byte_addr)?;
         self.write_command(Command::Mread)?;
         let current = self.read_data().unwrap_or(0);
@@ -248,7 +248,7 @@ where
         self.data.write(cmd as u8);
         self.delay.delay_ns(10);
         self.wr.set_low();
-        self.delay.delay_ns(130);
+        self.delay.delay_ns(150);
         self.wr.set_high();
         Ok(())
     }
@@ -258,7 +258,7 @@ where
         self.data.write(data);
         self.delay.delay_ns(10);
         self.wr.set_low();
-        self.delay.delay_ns(130);
+        self.delay.delay_ns(150);
         self.wr.set_high();
         Ok(())
     }
@@ -269,7 +269,7 @@ where
         self.rd.set_low();
         self.delay.delay_ns(30);
         let result = self.data.read()?;
-        self.delay.delay_ns(10);
+        self.delay.delay_ns(30);
         self.rd.set_high();
         self.data.set_output();
         Ok(result)
