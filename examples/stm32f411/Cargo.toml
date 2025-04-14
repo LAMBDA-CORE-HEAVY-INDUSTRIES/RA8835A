@@ -18,6 +18,7 @@ features = ["stm32f411"]
 
 [profile.dev]
 panic="abort"
+opt-level=2
 
 [[bin]]
 name = "ra8835a-example"
